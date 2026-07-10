@@ -35,6 +35,7 @@ Example:
 
 import logging
 import multiprocessing as mp
+import os
 import tempfile
 from pathlib import Path
 from typing import Any
@@ -114,7 +115,10 @@ class OptimizationManager:
         )
         self.log_dir.mkdir(parents=True, exist_ok=True)
 
-        self.openai_model = openai_model
+        # OPENAI_MODEL env overrides the per-strategy config's openai_model, so a
+        # self-hosted endpoint (see OpenAIProvider + OPENAI_BASE_URL) can drive the
+        # whole optimize loop without editing configs/*.yaml.
+        self.openai_model = os.environ.get("OPENAI_MODEL") or openai_model
         self.high_reasoning_effort = high_reasoning_effort
         self.bottleneck_override = bottleneck_override
         self.worker_kwargs = worker_kwargs
