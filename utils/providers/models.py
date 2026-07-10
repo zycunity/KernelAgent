@@ -14,10 +14,14 @@
 
 """Model registry and configuration for KernelAgent."""
 
+import os
 from typing import Type
 
+from .anthropic_provider import AnthropicProvider
 from .base import BaseProvider
 from .model_config import ModelConfig
+from .openai_provider import OpenAIProvider
+from .relay_provider import RelayProvider
 
 # Cached model lookup dictionary (lazily initialized)
 _model_name_to_config: dict[str, ModelConfig] | None = None
@@ -73,18 +77,12 @@ def get_model_provider(
         # KA_DEFAULT_PROVIDER=openai|anthropic|relay (default relay = upstream).
         # With "openai" + OPENAI_BASE_URL this routes any OpenAI-compatible
         # endpoint (vLLM/SGLang/gateway), so a new model is pure env injection.
-        import os as _os
-
-        from .anthropic_provider import AnthropicProvider
-        from .openai_provider import OpenAIProvider
-        from .relay_provider import RelayProvider
-
         _fallback = {
             "openai": OpenAIProvider,
             "anthropic": AnthropicProvider,
             "relay": RelayProvider,
         }
-        _choice = _os.environ.get("KA_DEFAULT_PROVIDER", "relay").lower()
+        _choice = os.environ.get("KA_DEFAULT_PROVIDER", "relay").lower()
         _provider_cls = _fallback.get(_choice, RelayProvider)
         model_config = ModelConfig(
             name=model_name,
