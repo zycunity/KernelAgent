@@ -29,6 +29,24 @@ except ImportError:
     OpenAI = None
 
 
+def _message_text(message: Any) -> str | None:
+    """Extract the assistant text, tolerating reasoning models.
+
+    vLLM reasoning models (GLM/Qwen) may return ``content=None`` with the text in
+    ``reasoning`` / ``reasoning_content``. Fall back so downstream code-fence
+    parsing always gets a string instead of crashing on None.
+    """
+    if getattr(message, "content", None):
+        return message.content
+    extra = getattr(message, "model_extra", None) or {}
+    return (
+        getattr(message, "reasoning_content", None)
+        or getattr(message, "reasoning", None)
+        or extra.get("reasoning_content")
+        or extra.get("reasoning")
+    )
+
+
 class OpenAICompatibleProvider(BaseProvider):
     """Base provider for OpenAI-compatible APIs."""
 
@@ -69,7 +87,7 @@ class OpenAICompatibleProvider(BaseProvider):
         )
 
         return LLMResponse(
-            content=response.choices[0].message.content,
+            content=_message_text(response.choices[0].message),
             model=model_name,
             provider=self.name,
             usage=response.usage.dict()
@@ -93,7 +111,7 @@ class OpenAICompatibleProvider(BaseProvider):
 
         return [
             LLMResponse(
-                content=choice.message.content,
+                content=_message_text(choice.message),
                 model=model_name,
                 provider=self.name,
                 usage=response.usage.dict()
