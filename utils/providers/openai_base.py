@@ -16,6 +16,7 @@
 
 from typing import Any
 import logging
+import os
 from .base import BaseProvider, LLMResponse
 from .env_config import configure_proxy_environment
 
@@ -135,6 +136,13 @@ class OpenAICompatibleProvider(BaseProvider):
             ("o3", "o1")
         ):
             params["reasoning_effort"] = "high"
+
+        # Self-hosted reasoning models (GLM/Qwen via vLLM) emit chain-of-thought in
+        # `reasoning` and leave `content` null until it finishes — slow, and it can
+        # exhaust the token budget so `content` never populates. OPENAI_DISABLE_THINKING
+        # tells vLLM to skip thinking. No-op for OpenAI/Anthropic.
+        if os.environ.get("OPENAI_DISABLE_THINKING"):
+            params["extra_body"] = {"chat_template_kwargs": {"enable_thinking": False}}
 
         return params
 
