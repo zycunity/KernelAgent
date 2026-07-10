@@ -69,13 +69,27 @@ def get_model_provider(
     """
     model_name_to_config = _get_model_name_to_config()
     if model_name not in model_name_to_config:
-        # Default to RelayProvider for unknown models
+        # POC overlay: env-selected fallback provider for unknown model names.
+        # KA_DEFAULT_PROVIDER=openai|anthropic|relay (default relay = upstream).
+        # With "openai" + OPENAI_BASE_URL this routes any OpenAI-compatible
+        # endpoint (vLLM/SGLang/gateway), so a new model is pure env injection.
+        import os as _os
+
+        from .anthropic_provider import AnthropicProvider
+        from .openai_provider import OpenAIProvider
         from .relay_provider import RelayProvider
 
+        _fallback = {
+            "openai": OpenAIProvider,
+            "anthropic": AnthropicProvider,
+            "relay": RelayProvider,
+        }
+        _choice = _os.environ.get("KA_DEFAULT_PROVIDER", "relay").lower()
+        _provider_cls = _fallback.get(_choice, RelayProvider)
         model_config = ModelConfig(
             name=model_name,
-            provider_classes=[RelayProvider],
-            description=f"Unknown model '{model_name}' (defaulting to Relay)",
+            provider_classes=[_provider_cls],
+            description=f"Unknown model '{model_name}' (fallback -> {_choice})",
         )
     else:
         model_config = model_name_to_config[model_name]

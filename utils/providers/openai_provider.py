@@ -14,14 +14,24 @@
 
 """OpenAI provider implementation."""
 
+import os
+
 from .openai_base import OpenAICompatibleProvider
 
 
 class OpenAIProvider(OpenAICompatibleProvider):
-    """OpenAI API provider."""
+    """OpenAI API provider.
+
+    Honors ``OPENAI_BASE_URL`` so any OpenAI-compatible endpoint (vLLM, SGLang,
+    a company gateway) can be targeted by environment injection alone. When the
+    variable is unset the client falls back to api.openai.com (upstream default).
+    """
 
     def __init__(self):
-        super().__init__(api_key_env="OPENAI_API_KEY")
+        super().__init__(
+            api_key_env="OPENAI_API_KEY",
+            base_url=os.environ.get("OPENAI_BASE_URL"),
+        )
 
     @property
     def name(self) -> str:
