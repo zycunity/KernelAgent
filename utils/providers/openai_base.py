@@ -116,10 +116,16 @@ class OpenAICompatibleProvider(BaseProvider):
         if not (model_name.startswith("gpt-5") or model_name.startswith("o")):
             params["temperature"] = kwargs.get("temperature", 0.7)
 
-        # Use max_completion_tokens for newer models like GPT-5, fallback to max_tokens
-        max_tokens_value = min(
-            kwargs.get("max_tokens", 8192), self.get_max_tokens_limit(model_name)
-        )
+        # Use max_completion_tokens for newer models like GPT-5, fallback to max_tokens.
+        # OPENAI_MAX_TOKENS overrides the cap — reasoning models (thinking ON) need a
+        # bigger budget so `content` still populates after the chain-of-thought.
+        _env_max = os.environ.get("OPENAI_MAX_TOKENS")
+        if _env_max:
+            max_tokens_value = int(_env_max)
+        else:
+            max_tokens_value = min(
+                kwargs.get("max_tokens", 8192), self.get_max_tokens_limit(model_name)
+            )
         if model_name.startswith("gpt-5") or model_name.startswith("o"):
             params["max_completion_tokens"] = max_tokens_value
         else:
