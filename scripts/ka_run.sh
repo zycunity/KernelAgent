@@ -7,25 +7,32 @@
 # clean. Saves the optimized kernel + logs + a condition-encoded run_meta to GCS.
 #
 # Usage:
-#   scripts/ka_run.sh -c <candidate-dir> [--think off|low|high|max] [--rounds N]
+#   scripts/ka_run.sh -c <candidate-dir> [--provider glm|anthropic] [--model ID]
+#                     [--think off|low|high|max] [--rounds N]
 #                     [--strategy beam_search|greedy] [--user NAME] [--gcs <dir>]
+# Backend: --provider glm (default, in-cluster GLM-5.2) | anthropic (Claude).
+#   anthropic needs ANTHROPIC_API_KEY in env (never bake keys into the script).
+#   --model defaults: glm -> glm-5.2-504b, anthropic -> claude-opus-4-8.
+#   --think only affects GLM; the anthropic provider sends no thinking param.
 # Identity: GCS lands under /gcs/<user>/. <user> = --user > $KA_USER > $USER >
-#   whoami > anon. In the pod $USER is unset (root, non-login) so pass --user or
-#   export KA_USER=<you>, else output goes to /gcs/anon/.
+#   whoami > anon. Pod has no $USER (root, non-login) so pass --user / export KA_USER.
 # Examples:
 #   scripts/ka_run.sh -c /work/candidates/grouped_gemm --think off --rounds 3
-#   scripts/ka_run.sh -c /work/candidates/din_attention --think low --strategy greedy
+#   scripts/ka_run.sh -c /work/candidates/din_attention --provider anthropic --model claude-opus-4-8
 set -uo pipefail   # not -e: we handle failures so a failed run is still saved
 
-usage() { sed -n '2,17p' "$0"; exit "${1:-0}"; }
+usage() { sed -n '2,21p' "$0"; exit "${1:-0}"; }
 
 # ---- defaults ----
 CAND=""; THINK="off"; ROUNDS=3; STRAT="beam_search"; GCS_ROOT=""; KA_USER="${KA_USER:-}"
+PROVIDER="glm"; MODEL=""
 
 # ---- args ----
 while [ $# -gt 0 ]; do
   case "$1" in
     -c|--candidate) CAND="$2"; shift 2 ;;
+    --provider)     PROVIDER="$2"; shift 2 ;;
+    --model)        MODEL="$2"; shift 2 ;;
     --think)        THINK="$2"; shift 2 ;;
     --rounds)       ROUNDS="$2"; shift 2 ;;
     --strategy)     STRAT="$2"; shift 2 ;;
@@ -49,12 +56,24 @@ for f in problem.py input.py test.py; do
   [ -f "$CAND_DIR/$f" ] || { echo "ERROR: $CAND_DIR missing $f" >&2; exit 1; }
 done
 
-# ---- idempotent env: reset, then set per --think (GLM-5.2 honors reasoning_effort) ----
+# ---- idempotent env: reset, then set per --provider / --think ----
 unset OPENAI_DISABLE_THINKING OPENAI_REASONING_EFFORT
-export OPENAI_MODEL="${OPENAI_MODEL:-glm-5.2-504b}"
-export OPENAI_BASE_URL="${OPENAI_BASE_URL:-http://glm52-504b.ray-clusters:8000/v1}"
-export OPENAI_MAX_TOKENS="${OPENAI_MAX_TOKENS:-16384}"
+export OPENAI_MAX_TOKENS="${OPENAI_MAX_TOKENS:-16384}"   # cross-provider output cap (anthropic honors it too)
 export TRITON_LIBCUDA_PATH="${TRITON_LIBCUDA_PATH:-/usr/local/nvidia/lib64}"
+case "$PROVIDER" in
+  glm)
+    export KA_DEFAULT_PROVIDER=openai
+    export OPENAI_MODEL="${MODEL:-glm-5.2-504b}"
+    export OPENAI_BASE_URL="${OPENAI_BASE_URL:-http://glm52-504b.ray-clusters:8000/v1}"   # in-cluster GLM; OPENAI_API_KEY from pod secret
+    ;;
+  anthropic|claude)
+    export KA_DEFAULT_PROVIDER=anthropic
+    export OPENAI_MODEL="${MODEL:-claude-opus-4-8}"   # KA passes this straight through as the model id
+    unset OPENAI_BASE_URL                             # anthropic client uses its own endpoint
+    [ -n "${ANTHROPIC_API_KEY:-}" ] || { echo "ERROR: --provider anthropic needs ANTHROPIC_API_KEY in env (export it; never bake keys into the script)" >&2; exit 1; }
+    ;;
+  *) echo "ERROR: --provider must be glm|anthropic" >&2; exit 1 ;;
+esac
 case "$THINK" in
   off)  export OPENAI_DISABLE_THINKING=1 ;;
   high) export OPENAI_REASONING_EFFORT=high ;;  # GLM's ONLY bounded thinking level
@@ -74,7 +93,8 @@ clean
 
 # ---- run (tee full stdout to run.log for live view) ----
 LOG="$CAND_DIR/run.log"
-echo ">> ka_run: candidate=$NAME think=$THINK strategy=$STRAT rounds=$ROUNDS model=$OPENAI_MODEL"
+[ "$PROVIDER" != glm ] && [ "$THINK" != off ] && echo ">> NOTE: provider=$PROVIDER ignores --think (no thinking param sent); running $OPENAI_MODEL default mode." >&2
+echo ">> ka_run: provider=$PROVIDER model=$OPENAI_MODEL candidate=$NAME think=$THINK strategy=$STRAT rounds=$ROUNDS"
 ( cd "$KA_ROOT/examples" && python run_opt_manager.py --kernel-dir "$CAND_DIR" --strategy "$STRAT" --max-rounds "$ROUNDS" ) 2>&1 | tee "$LOG"
 STATUS=${PIPESTATUS[0]}
 
@@ -94,7 +114,7 @@ mkdir -p "$DEST"
   echo "candidate:  $NAME"
   echo "dtype:      $DT"
   echo "think:      $THINK   strategy: $STRAT   rounds: $ROUNDS"
-  echo "model:      $OPENAI_MODEL   base: $OPENAI_BASE_URL"
+  echo "provider:   ${KA_DEFAULT_PROVIDER:-?}   model: $OPENAI_MODEL   base: ${OPENAI_BASE_URL:-(anthropic native)}"
   echo "env:        DISABLE_THINKING=${OPENAI_DISABLE_THINKING:-} EFFORT=${OPENAI_REASONING_EFFORT:-} MAXTOK=$OPENAI_MAX_TOKENS"
   echo "ka_git_sha: $(git -C "$KA_ROOT" rev-parse --short HEAD 2>/dev/null || echo n/a)"
   echo "exit:       $STATUS"
