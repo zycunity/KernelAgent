@@ -97,8 +97,7 @@ clean
 
 # ---- run (tee full stdout to run.log for live view) ----
 LOG="$CAND_DIR/run.log"
-[ "$PROVIDER" != glm ] && [ "$THINK" != off ] && echo ">> NOTE: provider=$PROVIDER ignores --think (no thinking param sent); running $OPENAI_MODEL default mode." >&2
-echo ">> ka_run: provider=$PROVIDER model=$OPENAI_MODEL candidate=$NAME think=$THINK strategy=$STRAT rounds=$ROUNDS"
+echo ">> ka_run: provider=$PROVIDER model=$OPENAI_MODEL effort=${EFFORT:-default} candidate=$NAME think=$THINK strategy=$STRAT rounds=$ROUNDS"
 ( cd "$KA_ROOT/examples" && python run_opt_manager.py --kernel-dir "$CAND_DIR" --strategy "$STRAT" --max-rounds "$ROUNDS" ) 2>&1 | tee "$LOG"
 STATUS=${PIPESTATUS[0]}
 
@@ -111,7 +110,8 @@ TS="$(date +%Y%m%d-%H%M%S)"
 # model slug in the path so a cross-model A/B (e.g. glm-5.2-504b vs claude-*) lands
 # in separate dirs instead of colliding on everything-but-timestamp.
 MSLUG="$(printf '%s' "${OPENAI_MODEL:-unknown}" | tr '[:upper:]' '[:lower:]' | tr -c 'a-z0-9.' '-' | sed 's/-\{2,\}/-/g; s/^-//; s/-$//')"
-DEST="$GCS_ROOT/$NAME/${DT}-${MSLUG}-think-${THINK}-${STRAT}-r${ROUNDS}-${TS}"
+EFF="${EFFORT:-def}"   # anthropic effort in the path so effort-only A/Bs don't collide (def = API default high; n/a for glm)
+DEST="$GCS_ROOT/$NAME/${DT}-${MSLUG}-think-${THINK}-eff-${EFF}-${STRAT}-r${ROUNDS}-${TS}"
 mkdir -p "$DEST"
 {
   echo "date:       $(date)"
