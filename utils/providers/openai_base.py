@@ -161,6 +161,14 @@ class OpenAICompatibleProvider(BaseProvider):
         ):
             params["reasoning_effort"] = "high"
 
+        # OPENAI_REASONING_EFFORT (low|medium|high) forces a bounded thinking budget
+        # for any model. GLM-5.2 honors reasoning_effort (thinking_budget is ignored),
+        # so this is the middle ground between full thinking (unbounded — overruns the
+        # token budget, content stays null) and none. Overrides the above.
+        _effort = os.environ.get("OPENAI_REASONING_EFFORT")
+        if _effort:
+            params["reasoning_effort"] = _effort
+
         # Self-hosted reasoning models (GLM/Qwen via vLLM) emit chain-of-thought in
         # `reasoning` and leave `content` null until it finishes — slow, and it can
         # exhaust the token budget so `content` never populates. OPENAI_DISABLE_THINKING
