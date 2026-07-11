@@ -14,6 +14,8 @@
 
 """Anthropic provider implementation."""
 
+import os
+
 from .base import BaseProvider, LLMResponse
 from .env_config import configure_proxy_environment
 
@@ -76,6 +78,14 @@ class AnthropicProvider(BaseProvider):
 
     def is_available(self) -> bool:
         return ANTHROPIC_AVAILABLE and self.client is not None
+
+    def get_max_tokens_limit(self, model_name: str) -> int:
+        # OPENAI_MAX_TOKENS is KA's cross-provider output cap (set by
+        # scripts/ka_run.sh and the Deployment). Honor it here so Claude gets the
+        # same output budget as the OpenAI/GLM path — the base default (8192)
+        # truncates long kernel rewrites and makes a cross-model A/B unfair.
+        _env = os.environ.get("OPENAI_MAX_TOKENS")
+        return int(_env) if _env else 8192
 
     @property
     def name(self) -> str:

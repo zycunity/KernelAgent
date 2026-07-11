@@ -84,7 +84,10 @@ RESULT="$(grep -iE 'Best time:|Speedup vs|OPTIMIZATION (SUCCESSFUL|FAILED)|worke
 # ---- condition-encoded GCS dest + run_meta (full provenance) ----
 DT="$(grep -oE 'torch\.(bfloat16|float32|float16)' "$CAND_DIR/problem.py" | head -1 | cut -d. -f2)"
 TS="$(date +%Y%m%d-%H%M%S)"
-DEST="$GCS_ROOT/$NAME/${DT}-think-${THINK}-${STRAT}-r${ROUNDS}-${TS}"
+# model slug in the path so a cross-model A/B (e.g. glm-5.2-504b vs claude-*) lands
+# in separate dirs instead of colliding on everything-but-timestamp.
+MSLUG="$(printf '%s' "${OPENAI_MODEL:-unknown}" | tr '[:upper:]' '[:lower:]' | tr -c 'a-z0-9.' '-' | sed 's/-\{2,\}/-/g; s/^-//; s/-$//')"
+DEST="$GCS_ROOT/$NAME/${DT}-${MSLUG}-think-${THINK}-${STRAT}-r${ROUNDS}-${TS}"
 mkdir -p "$DEST"
 {
   echo "date:       $(date)"
