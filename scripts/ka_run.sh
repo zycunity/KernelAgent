@@ -57,9 +57,15 @@ export OPENAI_MAX_TOKENS="${OPENAI_MAX_TOKENS:-16384}"
 export TRITON_LIBCUDA_PATH="${TRITON_LIBCUDA_PATH:-/usr/local/nvidia/lib64}"
 case "$THINK" in
   off)  export OPENAI_DISABLE_THINKING=1 ;;
-  max)  : ;;                                   # unbounded (both unset) — impractical on slow GLM
-  low|high|medium) export OPENAI_REASONING_EFFORT="$THINK" ;;
-  *) echo "ERROR: --think must be off|low|high|max" >&2; exit 1 ;;
+  high) export OPENAI_REASONING_EFFORT=high ;;  # GLM's ONLY bounded thinking level
+  max)  : ;;                                    # unbounded (both unset) — impractical on slow GLM
+  low|medium)
+    export OPENAI_REASONING_EFFORT="$THINK"
+    # GLM-5.2 chat_template: effective_effort = 'high' if effort=='high' else 'max'.
+    # low/medium collapse to Max (unbounded) -> over-think -> timeout. Kept for
+    # non-GLM backends that honor them; on GLM use --think high or off.
+    echo ">> WARN: GLM-5.2 maps reasoning_effort '$THINK' -> Max (unbounded); expect timeout. Use --think high|off." >&2 ;;
+  *) echo "ERROR: --think must be off|low|medium|high|max" >&2; exit 1 ;;
 esac
 
 # ---- teardown BEFORE (clean start) ----
