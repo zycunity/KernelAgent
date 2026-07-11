@@ -13,8 +13,8 @@
 # Backend: --provider glm (default, in-cluster GLM-5.2) | anthropic (Claude).
 #   anthropic needs ANTHROPIC_API_KEY in env (never bake keys into the script).
 #   --model defaults: glm -> glm-5.2-504b, anthropic -> claude-opus-4-8.
-#   --think: GLM reasoning_effort; on anthropic off=no thinking, else adaptive on.
-#   --effort low|medium|high|max|xhigh (anthropic depth; unset=API default high).
+#   --think: glm off|low|medium|high|max (discrete); anthropic off|on (adaptive).
+#   --effort low|medium|high|max|xhigh (anthropic only; depth; unset=high).
 # Identity: GCS lands under /gcs/<user>/. <user> = --user > $KA_USER > $USER >
 #   whoami > anon. Pod has no $USER (root, non-login) so pass --user / export KA_USER.
 # Examples:
@@ -74,22 +74,30 @@ case "$PROVIDER" in
     unset OPENAI_BASE_URL                             # anthropic client uses its own endpoint
     [ -n "${ANTHROPIC_API_KEY:-}" ] || { echo "ERROR: --provider anthropic needs ANTHROPIC_API_KEY in env (export it; never bake keys into the script)" >&2; exit 1; }
     [ -n "$EFFORT" ] && export ANTHROPIC_EFFORT="$EFFORT"   # low|medium|high|max|xhigh (unset = API default high)
-    [ "$THINK" != off ] && export ANTHROPIC_THINKING=1      # --think != off -> adaptive thinking on (opus-4.8's only way to think)
     ;;
   *) echo "ERROR: --provider must be glm|anthropic" >&2; exit 1 ;;
 esac
-case "$THINK" in
-  off)  export OPENAI_DISABLE_THINKING=1 ;;
-  high) export OPENAI_REASONING_EFFORT=high ;;  # GLM's ONLY bounded thinking level
-  max)  : ;;                                    # unbounded (both unset) — impractical on slow GLM
-  low|medium)
-    export OPENAI_REASONING_EFFORT="$THINK"
-    # GLM-5.2 chat_template: effective_effort = 'high' if effort=='high' else 'max'.
-    # low/medium collapse to Max (unbounded) -> over-think -> timeout. Kept for
-    # non-GLM backends that honor them; on GLM use --think high or off.
-    echo ">> WARN: GLM-5.2 maps reasoning_effort '$THINK' -> Max (unbounded); expect timeout. Use --think high|off." >&2 ;;
-  *) echo "ERROR: --think must be off|low|medium|high|max" >&2; exit 1 ;;
-esac
+# thinking is provider-shaped: GLM = discrete reasoning_effort; anthropic = binary
+# adaptive (on/off), with depth set separately by --effort.
+if [ "$PROVIDER" = glm ]; then
+  case "$THINK" in
+    off)  export OPENAI_DISABLE_THINKING=1 ;;
+    high) export OPENAI_REASONING_EFFORT=high ;;  # GLM's ONLY bounded thinking level
+    max)  : ;;                                    # unbounded (both unset) — impractical on slow GLM
+    low|medium)
+      export OPENAI_REASONING_EFFORT="$THINK"
+      # GLM chat_template: effective_effort = 'high' if effort=='high' else 'max'; low/medium
+      # collapse to Max (unbounded) -> over-think -> timeout. Use --think high|off.
+      echo ">> WARN: GLM-5.2 maps reasoning_effort '$THINK' -> Max (unbounded); expect timeout. Use --think high|off." >&2 ;;
+    *) echo "ERROR: glm --think must be off|low|medium|high|max" >&2; exit 1 ;;
+  esac
+else
+  case "$THINK" in
+    off)                    : ;;                    # no adaptive -> Claude runs without thinking
+    on|low|medium|high|max) export ANTHROPIC_THINKING=1 ;;   # any non-off -> adaptive thinking ON (binary); depth via --effort
+    *) echo "ERROR: anthropic --think must be off|on" >&2; exit 1 ;;
+  esac
+fi
 
 # ---- teardown BEFORE (clean start) ----
 clean() { rm -rf "$CAND_DIR/opt_manager_logs" "$CAND_DIR"/optimized_kernel_*.py "$CAND_DIR/run.log"; }
@@ -110,8 +118,14 @@ TS="$(date +%Y%m%d-%H%M%S)"
 # model slug in the path so a cross-model A/B (e.g. glm-5.2-504b vs claude-*) lands
 # in separate dirs instead of colliding on everything-but-timestamp.
 MSLUG="$(printf '%s' "${OPENAI_MODEL:-unknown}" | tr '[:upper:]' '[:lower:]' | tr -c 'a-z0-9.' '-' | sed 's/-\{2,\}/-/g; s/^-//; s/-$//')"
-EFF="${EFFORT:-def}"   # anthropic effort in the path so effort-only A/Bs don't collide (def = API default high; n/a for glm)
-DEST="$GCS_ROOT/$NAME/${DT}-${MSLUG}-think-${THINK}-eff-${EFF}-${STRAT}-r${ROUNDS}-${TS}"
+# path condition is provider-shaped: glm -> discrete think, no effort segment;
+# anthropic -> binary think (on/off) + effort depth (def = API default high).
+if [ "$PROVIDER" = glm ]; then
+  COND="think-${THINK}"
+else
+  COND="think-$([ "$THINK" = off ] && echo off || echo on)-eff-${EFFORT:-def}"
+fi
+DEST="$GCS_ROOT/$NAME/${DT}-${MSLUG}-${COND}-${STRAT}-r${ROUNDS}-${TS}"
 mkdir -p "$DEST"
 {
   echo "date:       $(date)"
