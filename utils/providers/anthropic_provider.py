@@ -51,30 +51,41 @@ class AnthropicProvider(BaseProvider):
             raise RuntimeError("Anthropic client not available")
 
         user_content = messages[-1]["content"] if messages else ""
-        response = self.client.messages.create(
-            model=model_name,
-            max_tokens=min(
+        params = {
+            "model": model_name,
+            "max_tokens": min(
                 kwargs.get("max_tokens", 8192), self.get_max_tokens_limit(model_name)
             ),
-            temperature=kwargs.get("temperature", 0.7),
-            messages=[{"role": "user", "content": user_content}],
-        )
+            "messages": [{"role": "user", "content": user_content}],
+        }
+        # `temperature` is deprecated on current Claude models (opus-4.8 etc. return
+        # HTTP 400). Only send it when explicitly opted in (older models).
+        _t = os.environ.get("ANTHROPIC_TEMPERATURE")
+        if _t:
+            params["temperature"] = float(_t)
+        # `effort` (low|medium|high|max|xhigh) is the modern depth control; it lives
+        # in output_config. Unset == the API default (high).
+        _eff = os.environ.get("ANTHROPIC_EFFORT")
+        if _eff:
+            params["output_config"] = {"effort": _eff}
+        # opus-4.8 / Sonnet 5 only think when adaptive thinking is enabled here.
+        if os.environ.get("ANTHROPIC_THINKING") == "1":
+            params["thinking"] = {"type": "adaptive"}
 
-        return LLMResponse(
-            content=response.content[0].text, model=model_name, provider=self.name
+        response = self.client.messages.create(**params)
+        # With thinking on, content[0] may be a thinking block — take the first text.
+        text = next(
+            (b.text for b in response.content if getattr(b, "type", None) == "text"),
+            "",
         )
+        return LLMResponse(content=text, model=model_name, provider=self.name)
 
     def get_multiple_responses(
         self, model_name: str, messages: list[dict[str, str]], n: int = 1, **kwargs
     ) -> list[LLMResponse]:
-        return [
-            self.get_response(
-                model_name,
-                messages,
-                temperature=kwargs.get("temperature", 0.7) + i * 0.1,
-            )
-            for i in range(n)
-        ]
+        # No temperature knob on current models; N independent calls still vary
+        # (the model samples by default), preserving beam-search diversity.
+        return [self.get_response(model_name, messages, **kwargs) for _ in range(n)]
 
     def is_available(self) -> bool:
         return ANTHROPIC_AVAILABLE and self.client is not None

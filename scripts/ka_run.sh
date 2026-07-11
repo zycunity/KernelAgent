@@ -8,12 +8,13 @@
 #
 # Usage:
 #   scripts/ka_run.sh -c <candidate-dir> [--provider glm|anthropic] [--model ID]
-#                     [--think off|low|high|max] [--rounds N]
+#                     [--effort L] [--think off|low|high|max] [--rounds N]
 #                     [--strategy beam_search|greedy] [--user NAME] [--gcs <dir>]
 # Backend: --provider glm (default, in-cluster GLM-5.2) | anthropic (Claude).
 #   anthropic needs ANTHROPIC_API_KEY in env (never bake keys into the script).
 #   --model defaults: glm -> glm-5.2-504b, anthropic -> claude-opus-4-8.
-#   --think only affects GLM; the anthropic provider sends no thinking param.
+#   --think: GLM reasoning_effort; on anthropic off=no thinking, else adaptive on.
+#   --effort low|medium|high|max|xhigh (anthropic depth; unset=API default high).
 # Identity: GCS lands under /gcs/<user>/. <user> = --user > $KA_USER > $USER >
 #   whoami > anon. Pod has no $USER (root, non-login) so pass --user / export KA_USER.
 # Examples:
@@ -21,11 +22,11 @@
 #   scripts/ka_run.sh -c /work/candidates/din_attention --provider anthropic --model claude-opus-4-8
 set -uo pipefail   # not -e: we handle failures so a failed run is still saved
 
-usage() { sed -n '2,21p' "$0"; exit "${1:-0}"; }
+usage() { sed -n '2,22p' "$0"; exit "${1:-0}"; }
 
 # ---- defaults ----
 CAND=""; THINK="off"; ROUNDS=3; STRAT="beam_search"; GCS_ROOT=""; KA_USER="${KA_USER:-}"
-PROVIDER="glm"; MODEL=""
+PROVIDER="glm"; MODEL=""; EFFORT=""
 
 # ---- args ----
 while [ $# -gt 0 ]; do
@@ -33,6 +34,7 @@ while [ $# -gt 0 ]; do
     -c|--candidate) CAND="$2"; shift 2 ;;
     --provider)     PROVIDER="$2"; shift 2 ;;
     --model)        MODEL="$2"; shift 2 ;;
+    --effort)       EFFORT="$2"; shift 2 ;;
     --think)        THINK="$2"; shift 2 ;;
     --rounds)       ROUNDS="$2"; shift 2 ;;
     --strategy)     STRAT="$2"; shift 2 ;;
@@ -57,7 +59,7 @@ for f in problem.py input.py test.py; do
 done
 
 # ---- idempotent env: reset, then set per --provider / --think ----
-unset OPENAI_DISABLE_THINKING OPENAI_REASONING_EFFORT
+unset OPENAI_DISABLE_THINKING OPENAI_REASONING_EFFORT ANTHROPIC_EFFORT ANTHROPIC_THINKING
 export OPENAI_MAX_TOKENS="${OPENAI_MAX_TOKENS:-16384}"   # cross-provider output cap (anthropic honors it too)
 export TRITON_LIBCUDA_PATH="${TRITON_LIBCUDA_PATH:-/usr/local/nvidia/lib64}"
 case "$PROVIDER" in
@@ -71,6 +73,8 @@ case "$PROVIDER" in
     export OPENAI_MODEL="${MODEL:-claude-opus-4-8}"   # KA passes this straight through as the model id
     unset OPENAI_BASE_URL                             # anthropic client uses its own endpoint
     [ -n "${ANTHROPIC_API_KEY:-}" ] || { echo "ERROR: --provider anthropic needs ANTHROPIC_API_KEY in env (export it; never bake keys into the script)" >&2; exit 1; }
+    [ -n "$EFFORT" ] && export ANTHROPIC_EFFORT="$EFFORT"   # low|medium|high|max|xhigh (unset = API default high)
+    [ "$THINK" != off ] && export ANTHROPIC_THINKING=1      # --think != off -> adaptive thinking on (opus-4.8's only way to think)
     ;;
   *) echo "ERROR: --provider must be glm|anthropic" >&2; exit 1 ;;
 esac
@@ -115,7 +119,7 @@ mkdir -p "$DEST"
   echo "dtype:      $DT"
   echo "think:      $THINK   strategy: $STRAT   rounds: $ROUNDS"
   echo "provider:   ${KA_DEFAULT_PROVIDER:-?}   model: $OPENAI_MODEL   base: ${OPENAI_BASE_URL:-(anthropic native)}"
-  echo "env:        DISABLE_THINKING=${OPENAI_DISABLE_THINKING:-} EFFORT=${OPENAI_REASONING_EFFORT:-} MAXTOK=$OPENAI_MAX_TOKENS"
+  echo "env:        DISABLE_THINKING=${OPENAI_DISABLE_THINKING:-} EFFORT=${OPENAI_REASONING_EFFORT:-} MAXTOK=$OPENAI_MAX_TOKENS ANTHROPIC_EFFORT=${ANTHROPIC_EFFORT:-} ANTHROPIC_THINKING=${ANTHROPIC_THINKING:-}"
   echo "ka_git_sha: $(git -C "$KA_ROOT" rev-parse --short HEAD 2>/dev/null || echo n/a)"
   echo "exit:       $STATUS"
   echo "--- shapes (problem.py) ---"; grep -E '^[A-Z_]+ = ' "$CAND_DIR/problem.py" | sed 's/^/  /'
