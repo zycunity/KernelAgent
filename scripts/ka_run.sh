@@ -8,16 +8,19 @@
 #
 # Usage:
 #   scripts/ka_run.sh -c <candidate-dir> [--think off|low|high|max] [--rounds N]
-#                     [--strategy beam_search|greedy] [--gcs <dir>]
+#                     [--strategy beam_search|greedy] [--user NAME] [--gcs <dir>]
+# Identity: GCS lands under /gcs/<user>/. <user> = --user > $KA_USER > $USER >
+#   whoami > anon. In the pod $USER is unset (root, non-login) so pass --user or
+#   export KA_USER=<you>, else output goes to /gcs/anon/.
 # Examples:
 #   scripts/ka_run.sh -c /work/candidates/grouped_gemm --think off --rounds 3
 #   scripts/ka_run.sh -c /work/candidates/din_attention --think low --strategy greedy
 set -uo pipefail   # not -e: we handle failures so a failed run is still saved
 
-usage() { sed -n '2,15p' "$0"; exit "${1:-0}"; }
+usage() { sed -n '2,17p' "$0"; exit "${1:-0}"; }
 
 # ---- defaults ----
-CAND=""; THINK="off"; ROUNDS=3; STRAT="beam_search"; GCS_ROOT="/gcs/${USER:-anon}"
+CAND=""; THINK="off"; ROUNDS=3; STRAT="beam_search"; GCS_ROOT=""; KA_USER="${KA_USER:-}"
 
 # ---- args ----
 while [ $# -gt 0 ]; do
@@ -26,12 +29,17 @@ while [ $# -gt 0 ]; do
     --think)        THINK="$2"; shift 2 ;;
     --rounds)       ROUNDS="$2"; shift 2 ;;
     --strategy)     STRAT="$2"; shift 2 ;;
+    --user)         KA_USER="$2"; shift 2 ;;
     --gcs)          GCS_ROOT="$2"; shift 2 ;;
     -h|--help)      usage 0 ;;
     *) echo "unknown arg: $1" >&2; usage 1 ;;
   esac
 done
 [ -n "$CAND" ] || { echo "ERROR: -c <candidate-dir> required" >&2; usage 1; }
+
+# ---- identity: /gcs/<user>/ (pod has no $USER -> whoami=root -> anon) ----
+KA_USER="${KA_USER:-${USER:-$(whoami 2>/dev/null || echo anon)}}"
+GCS_ROOT="${GCS_ROOT:-/gcs/$KA_USER}"
 
 # ---- resolve paths from script location (works from any cwd) ----
 KA_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
